@@ -11,32 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-use crate::archive::{self, ArchiveFormat};
+use crate::archive;
 
-const DEFAULT_NODE_INDEX_URL: &str = "https://nodejs.org/dist/index.json";
-const DEFAULT_NODE_DIST_BASE: &str = "https://nodejs.org/dist";
 const NODE_MANIFEST_NAME: &str = "current.json";
 const GIT_MANIFEST_NAME: &str = "current.json";
 const RUNTIME_STATE_NAME: &str = "current.env";
 const GIT_FOR_WINDOWS_STABLE_RELEASE_API: &str =
     "https://api.github.com/repos/git-for-windows/git/releases/latest";
-
-#[derive(Debug, Clone)]
-pub struct NodeSource {
-    pub index_url: String,
-    pub dist_base: String,
-}
-
-impl Default for NodeSource {
-    fn default() -> Self {
-        Self {
-            index_url: DEFAULT_NODE_INDEX_URL.to_string(),
-            dist_base: DEFAULT_NODE_DIST_BASE.to_string(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ManagedToolStatus {
@@ -76,31 +58,8 @@ struct RuntimeManifest {
     installed_at_unix_ms: u128,
 }
 
-#[derive(Debug, Clone)]
-struct NodeRelease {
-    version: String,
-    archive_name: String,
-    archive_url: String,
-    shasums_url: String,
-    format: ArchiveFormat,
-}
 
-#[derive(Debug, Clone)]
-struct NodeTarget {
-    file_key: &'static str,
-    archive_platform: &'static str,
-    suffix: &'static str,
-    format: ArchiveFormat,
-}
 
-#[derive(Debug, Deserialize)]
-struct NodeIndexEntry {
-    version: String,
-    #[serde(default)]
-    lts: serde_json::Value,
-    #[serde(default)]
-    files: Vec<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
@@ -213,71 +172,6 @@ pub async fn managed_git_status() -> ManagedToolStatus {
     }
 }
 
-pub async fn ensure_node_lts<F, C>(
-    source: &NodeSource,
-    mut on_log: F,
-    is_cancelled: C,
-) -> anyhow::Result<ManagedToolStatus>
-where
-    F: FnMut(String),
-    C: Fn() -> bool,
-{
-    let release = latest_node_lts_release(source).await?;
-    if is_cancelled() {
-        bail!("install cancelled");
-    }
-
-    let current = managed_node_status(None).await;
-    if current.ready && current.version.as_deref() == Some(release.version.as_str()) {
-        return Ok(current);
-    }
-
-    on_log(format!("Downloading Node.js {}", release.version));
-    let bytes = archive::download_bytes(&release.archive_url).await?;
-    if is_cancelled() {
-        bail!("install cancelled");
-    }
-
-    on_log("Verifying Node.js archive".to_string());
-    verify_node_archive(&release, &bytes).await?;
-    if is_cancelled() {
-        bail!("install cancelled");
-    }
-
-    let install_dir = node_version_dir(&release.version);
-    if node_executable_in(&install_dir).exists() {
-        write_runtime_manifest(
-            &node_manifest_path(),
-            "node",
-            &release.version,
-            &install_dir,
-            &node_bin_dir_in(&install_dir),
-        )?;
-        return Ok(managed_node_status(None).await);
-    }
-
-    let staging_dir = archive::staging_dir_for(&install_dir, "node")?;
-    archive::recreate_dir(&staging_dir)?;
-    on_log(format!("Extracting Node.js {}", release.version));
-    archive::extract_bytes_strip_root(bytes, release.format, &staging_dir).await?;
-    if !node_executable_in(&staging_dir).exists() {
-        bail!(
-            "Node.js archive did not contain {}",
-            node_executable_in(&staging_dir).display()
-        );
-    }
-
-    archive::atomic_replace_dir(&staging_dir, &install_dir)?;
-    write_runtime_manifest(
-        &node_manifest_path(),
-        "node",
-        &release.version,
-        &install_dir,
-        &node_bin_dir_in(&install_dir),
-    )?;
-    Ok(managed_node_status(None).await)
-}
-
 pub async fn ensure_windows_portable_git<F, C>(
     mut on_log: F,
     is_cancelled: C,
@@ -354,57 +248,6 @@ where
     Ok(managed_git_status().await)
 }
 
-async fn latest_node_lts_release(source: &NodeSource) -> anyhow::Result<NodeRelease> {
-    let target = NodeTarget::current()
-        .ok_or_else(|| anyhow!("managed Node.js is not available for this platform"))?;
-    let bytes = archive::download_bytes(&source.index_url).await?;
-    let entries: Vec<NodeIndexEntry> =
-        serde_json::from_slice(&bytes).context("parsing Node.js index")?;
-    let entry = latest_node_lts_entry(entries, target.file_key)
-        .ok_or_else(|| anyhow!("no Node.js LTS archive found for {}", target.file_key))?;
-    let archive_name = target.archive_name(&entry.version);
-    let base = source.dist_base.trim_end_matches('/');
-    Ok(NodeRelease {
-        version: entry.version.clone(),
-        archive_url: format!("{base}/{}/{}", entry.version, archive_name),
-        shasums_url: format!("{base}/{}/SHASUMS256.txt", entry.version),
-        archive_name,
-        format: target.format,
-    })
-}
-
-fn latest_node_lts_entry(entries: Vec<NodeIndexEntry>, file_key: &str) -> Option<NodeIndexEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| is_lts_value(&entry.lts) && entry.files.iter().any(|file| file == file_key))
-        .max_by_key(|entry| parse_version_triplet(&entry.version).unwrap_or((0, 0, 0)))
-}
-
-async fn verify_node_archive(release: &NodeRelease, bytes: &[u8]) -> anyhow::Result<()> {
-    let shasums = archive::download_bytes(&release.shasums_url).await?;
-    let shasums = String::from_utf8(shasums).context("reading Node.js SHASUMS256.txt")?;
-    let expected = shasums
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            let digest = parts.next()?;
-            let name = parts.next()?;
-            (name == release.archive_name).then_some(digest)
-        })
-        .next()
-        .ok_or_else(|| anyhow!("checksum for {} not found", release.archive_name))?;
-    let actual = format!("{:x}", Sha256::digest(bytes));
-    if actual != expected {
-        bail!(
-            "checksum mismatch for {}: expected {}, got {}",
-            release.archive_name,
-            expected,
-            actual
-        );
-    }
-    Ok(())
-}
-
 async fn latest_stable_git_for_windows_release() -> anyhow::Result<GitHubRelease> {
     let bytes = archive::download_bytes(GIT_FOR_WINDOWS_STABLE_RELEASE_API).await?;
     let release: GitHubRelease =
@@ -427,70 +270,12 @@ fn select_portable_git_asset(release: &GitHubRelease) -> Option<&GitHubReleaseAs
     })
 }
 
-impl NodeTarget {
-    fn current() -> Option<Self> {
-        match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("macos", "aarch64") => Some(Self {
-                file_key: "osx-arm64-tar",
-                archive_platform: "darwin-arm64",
-                suffix: "tar.gz",
-                format: ArchiveFormat::TarGz,
-            }),
-            ("macos", "x86_64") => Some(Self {
-                file_key: "osx-x64-tar",
-                archive_platform: "darwin-x64",
-                suffix: "tar.gz",
-                format: ArchiveFormat::TarGz,
-            }),
-            #[cfg(target_os = "linux")]
-            ("linux", "aarch64") => Some(Self {
-                file_key: "linux-arm64",
-                archive_platform: "linux-arm64",
-                suffix: "tar.xz",
-                format: ArchiveFormat::TarXz,
-            }),
-            #[cfg(target_os = "linux")]
-            ("linux", "x86_64") => Some(Self {
-                file_key: "linux-x64",
-                archive_platform: "linux-x64",
-                suffix: "tar.xz",
-                format: ArchiveFormat::TarXz,
-            }),
-            ("windows", "aarch64") => Some(Self {
-                file_key: "win-arm64-zip",
-                archive_platform: "win-arm64",
-                suffix: "zip",
-                format: ArchiveFormat::Zip,
-            }),
-            ("windows", "x86_64") => Some(Self {
-                file_key: "win-x64-zip",
-                archive_platform: "win-x64",
-                suffix: "zip",
-                format: ArchiveFormat::Zip,
-            }),
-            _ => None,
-        }
-    }
-
-    fn archive_name(&self, version: &str) -> String {
-        format!("node-{version}-{}.{}", self.archive_platform, self.suffix)
-    }
-}
-
 fn node_root_dir() -> PathBuf {
     runtime_dir().join("node")
 }
 
-fn node_versions_dir() -> PathBuf {
-    node_root_dir().join("versions")
-}
-
 fn node_manifest_path() -> PathBuf {
     node_root_dir().join(NODE_MANIFEST_NAME)
-}
-
-fn node_version_dir(version: &str) -> PathBuf {
-    node_versions_dir().join(sanitize_version_path(version))
 }
 
 fn node_bin_dir_in(install_dir: &Path) -> PathBuf {
@@ -638,13 +423,6 @@ async fn command_version(path: &Path, args: &[&str]) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_string)
-}
-
-fn is_lts_value(value: &serde_json::Value) -> bool {
-    !matches!(
-        value,
-        serde_json::Value::Bool(false) | serde_json::Value::Null
-    )
 }
 
 fn version_at_least(current: &str, minimum: &str) -> bool {
@@ -825,49 +603,7 @@ mod tests {
         assert!(!version_at_least("v20.19.0", "22.0.0"));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn node_archive_name_uses_platform_fragment() {
-        let target = NodeTarget {
-            file_key: "linux-x64",
-            archive_platform: "linux-x64",
-            suffix: "tar.xz",
-            format: ArchiveFormat::TarXz,
-        };
-        assert_eq!(
-            target.archive_name("v24.11.1"),
-            "node-v24.11.1-linux-x64.tar.xz"
-        );
-    }
 
-    #[test]
-    fn latest_node_lts_entry_does_not_depend_on_index_order() {
-        let entries = vec![
-            NodeIndexEntry {
-                version: "v20.19.4".to_string(),
-                lts: serde_json::Value::String("Iron".to_string()),
-                files: vec!["linux-x64".to_string()],
-            },
-            NodeIndexEntry {
-                version: "v24.1.0".to_string(),
-                lts: serde_json::Value::Bool(false),
-                files: vec!["linux-x64".to_string()],
-            },
-            NodeIndexEntry {
-                version: "v22.18.0".to_string(),
-                lts: serde_json::Value::String("Jod".to_string()),
-                files: vec!["linux-x64".to_string()],
-            },
-            NodeIndexEntry {
-                version: "v22.19.0".to_string(),
-                lts: serde_json::Value::String("Jod".to_string()),
-                files: vec!["linux-arm64".to_string()],
-            },
-        ];
-
-        let selected = latest_node_lts_entry(entries, "linux-x64").expect("latest LTS entry");
-        assert_eq!(selected.version, "v22.18.0");
-    }
 
     #[test]
     fn selects_portable_git_asset_for_x64() {
