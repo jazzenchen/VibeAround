@@ -1282,6 +1282,41 @@ impl<T> Pipe for T {}
 mod tests {
     use super::*;
 
+    /// Every script the manifest names must exist, on every platform the item
+    /// claims to support. Nothing else checks this: the scripts are data, so a
+    /// rename or a missing Windows counterpart would otherwise only surface as a
+    /// runtime "script not found" on a user's machine.
+    #[test]
+    fn every_manifest_script_exists_for_every_declared_platform() {
+        let manifest = load_manifest().expect("loading the manifest");
+        let root = startkit_root();
+        let mut missing = Vec::new();
+
+        for item in &manifest.items {
+            for (label, script) in [
+                ("detect", &item.detect),
+                ("install", &item.install),
+                ("repair", &item.repair),
+            ] {
+                let Some(script) = script else { continue };
+                for platform in &item.platforms {
+                    let relative = match platform.as_str() {
+                        "macos" => &script.macos,
+                        "windows" => &script.windows,
+                        "linux" => &script.linux,
+                        _ => continue,
+                    };
+                    let Some(relative) = relative else { continue };
+                    if !root.join(relative).exists() {
+                        missing.push(format!("{} {} ({platform}): {relative}", item.id, label));
+                    }
+                }
+            }
+        }
+
+        assert!(missing.is_empty(), "manifest scripts not found: {missing:#?}");
+    }
+
     fn ids(choices: StartkitChoices) -> Vec<String> {
         ids_for_platform(choices, "macos")
     }
