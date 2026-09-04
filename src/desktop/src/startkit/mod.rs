@@ -9,7 +9,6 @@ mod agent;
 mod channels;
 mod managed;
 mod plan;
-mod redact;
 mod script;
 
 use std::collections::{HashMap, HashSet};
