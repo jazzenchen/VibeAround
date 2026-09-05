@@ -287,19 +287,6 @@ fn prepend_path(env: &mut HashMap<String, String>, path: PathBuf) {
 mod tests {
     use super::*;
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "va-toolchain-test-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("creating scratch dir");
-        dir
-    }
-
-
-
-
     /// The runtime manifest is written by the startkit install scripts and only
     /// read here, so the contract worth testing is that this parses exactly what
     /// they emit — not a Rust round-trip.
