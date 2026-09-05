@@ -8,6 +8,26 @@
 $ErrorActionPreference = "Stop"
 
 function Emit($obj) { $obj | ConvertTo-Json -Compress }
+# Windows briefly reports a replaced destination as delete-pending, and virus
+# scanners and the indexer hold handles on freshly written files, so a move can
+# fail for a moment and then succeed. `current.json` and `current.env` are read
+# on every process spawn, which is exactly when that collision happens. Retry the
+# three transient Win32 errors and let every other failure through immediately,
+# so a genuine mistake still fails fast. Mirrors core's file_replace.
+function Move-WithRetry($from, $to) {
+  $transient = @(0x5, 0x20, 0x21)  # ACCESS_DENIED, SHARING_VIOLATION, LOCK_VIOLATION
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    try {
+      Move-Item -Force -Path $from -Destination $to
+      return
+    } catch {
+      $code = $_.Exception.HResult -band 0xFFFF
+      if ($attempt -eq 19 -or $transient -notcontains $code) { throw }
+      Start-Sleep -Milliseconds ([int][Math]::Pow(2, [Math]::Min($attempt, 4)))
+    }
+  }
+}
+
 function Progress($message) { Emit @{ event = "progress"; message = $message } }
 function Fail($message) {
   Emit @{ event = "result"; status = "error"; message = $message; actions = @("install") }
@@ -115,7 +135,7 @@ if (-not $installed) {
     Fail "$archiveName did not contain node.exe."
   }
   if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
-  Move-Item -Path $root.FullName -Destination $installDir
+  Move-WithRetry $root.FullName $installDir
   Remove-Item -Recurse -Force $stagingDir -ErrorAction SilentlyContinue
   Remove-Item -Force $archivePath -ErrorAction SilentlyContinue
 }
@@ -133,7 +153,7 @@ $stateLines = @(
 )
 $stateTmp = Join-Path $runtimeDir "current.env.tmp"
 Set-Content -Path $stateTmp -Value ($stateLines -join "`n") -NoNewline -Encoding utf8
-Move-Item -Force -Path $stateTmp -Destination (Join-Path $runtimeDir "current.env")
+Move-WithRetry $stateTmp (Join-Path $runtimeDir "current.env")
 
 $manifest = [ordered]@{
   version = $version
@@ -142,6 +162,6 @@ $manifest = [ordered]@{
 }
 $manifestTmp = Join-Path $runtimeDir "current.json.tmp"
 Set-Content -Path $manifestTmp -Value ($manifest | ConvertTo-Json) -Encoding utf8
-Move-Item -Force -Path $manifestTmp -Destination (Join-Path $runtimeDir "current.json")
+Move-WithRetry $manifestTmp (Join-Path $runtimeDir "current.json")
 
 Emit @{ event = "result"; status = "ok"; version = $version; path = $nodeBin; message = "Node.js $version is ready"; actions = @() }
