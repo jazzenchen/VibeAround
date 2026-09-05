@@ -28,8 +28,8 @@ use agent::agent_cli_npm_install_package;
 use agent::{agent_id_from_cli_item, execute_agent_cli_item, scan_agent_cli_item};
 use channels::run_channel_plugins_item;
 use managed::{
-    item_uses_managed_dependency_dir, run_managed_npm_package_item,
-    scan_managed_npm_package_item, scan_managed_toolchain_item,
+    item_uses_managed_dependency_dir, run_managed_npm_package_item, scan_managed_npm_package_item,
+    scan_managed_toolchain_item,
 };
 use plan::{
     effective_item_dependencies, find_item, is_managed_mode, item_summary, plan_from_manifest,
@@ -1308,7 +1308,10 @@ mod tests {
             }
         }
 
-        assert!(missing.is_empty(), "manifest scripts not found: {missing:#?}");
+        assert!(
+            missing.is_empty(),
+            "manifest scripts not found: {missing:#?}"
+        );
     }
 
     fn ids(choices: StartkitChoices) -> Vec<String> {

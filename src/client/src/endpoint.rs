@@ -78,7 +78,6 @@ fn http_to_ws(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::auth::AuthFile;
     use crate::events;
     use crate::service;
 

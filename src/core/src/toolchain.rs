@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-
 const NODE_MANIFEST_NAME: &str = "current.json";
 const GIT_MANIFEST_NAME: &str = "current.json";
 
@@ -52,11 +51,6 @@ struct RuntimeManifest {
     install_dir: PathBuf,
     installed_at_unix_ms: u128,
 }
-
-
-
-
-
 
 pub fn runtime_dir() -> PathBuf {
     crate::config::data_dir().join("runtime")
@@ -200,7 +194,6 @@ fn git_executable_in(install_dir: &Path) -> PathBuf {
     }
 }
 
-
 fn read_runtime_manifest(path: &Path) -> anyhow::Result<RuntimeManifest> {
     let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -287,28 +280,13 @@ fn prepend_path(env: &mut HashMap<String, String>, path: PathBuf) {
 mod tests {
     use super::*;
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "va-toolchain-test-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("creating scratch dir");
-        dir
-    }
-
-
-
-
     /// The runtime manifest is written by the startkit install scripts and only
     /// read here, so the contract worth testing is that this parses exactly what
     /// they emit — not a Rust round-trip.
     #[test]
     fn parses_a_manifest_written_by_an_install_script() {
-        let dir = std::env::temp_dir().join(format!(
-            "va-toolchain-contract-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("va-toolchain-contract-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("creating scratch dir");
         let path = dir.join(NODE_MANIFEST_NAME);
@@ -336,8 +314,4 @@ mod tests {
         assert!(version_at_least("24.1.0", "22.0.0"));
         assert!(!version_at_least("v20.19.0", "22.0.0"));
     }
-
-
-
-
 }

@@ -326,14 +326,15 @@ impl ThreadRuntime {
                         .cancel(acp::CancelNotification::new(session_id.clone()))
                         .await;
                     let shutdown_agent = Arc::clone(&agent);
-                    await_cancelled_prompt(
-                        prompt_call.as_mut(),
-                        ACP_CANCEL_GRACE,
-                        ACP_SHUTDOWN_RESPONSE_GRACE,
-                        move || async move { shutdown_agent.shutdown().await },
+                    normalize_cancelled_prompt_result(
+                        await_cancelled_prompt(
+                            prompt_call.as_mut(),
+                            ACP_CANCEL_GRACE,
+                            ACP_SHUTDOWN_RESPONSE_GRACE,
+                            move || async move { shutdown_agent.shutdown().await },
+                        )
+                        .await,
                     )
-                    .await
-                    .unwrap_or_else(cancelled_prompt_response)
                 }
                 result = &mut prompt_call => result,
             };

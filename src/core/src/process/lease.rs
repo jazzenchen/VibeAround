@@ -334,11 +334,13 @@ mod imp {
 
             drop(lease);
 
-            let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+            // Waiting successfully proves the attached root was reaped. Windows
+            // does not guarantee a non-zero exit code when closing a kill-on-close
+            // job, so the process tree disappearing is the contract to assert.
+            let _status = tokio::time::timeout(Duration::from_secs(5), child.wait())
                 .await
                 .expect("closing the job did not end the attached child")
                 .expect("wait");
-            assert!(!status.success(), "{status}");
             let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let system = processes();

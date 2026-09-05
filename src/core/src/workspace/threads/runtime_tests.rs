@@ -33,6 +33,64 @@ fn cancelled_prompt_is_not_a_successful_completion() {
     assert!(!prompt_completed_successfully(&failed));
 }
 
+fn shutdown_transport_error() -> acp::Error {
+    acp::Error::new(
+        -32603,
+        "response to `session/prompt` never received: oneshot canceled",
+    )
+}
+
+#[test]
+fn cancelled_prompt_discards_transport_error_caused_by_shutdown() {
+    let result = normalize_cancelled_prompt_result(CancelledPrompt::AfterShutdown(Some(Err(
+        shutdown_transport_error(),
+    ))))
+    .expect("a connection VibeAround tore down is a cancellation, not a failure");
+
+    assert_eq!(result.stop_reason, acp::StopReason::Cancelled);
+}
+
+#[test]
+fn cancelled_prompt_still_pending_after_shutdown_is_a_cancellation() {
+    let result = normalize_cancelled_prompt_result(CancelledPrompt::AfterShutdown(None))
+        .expect("an unanswered prompt after shutdown is a cancellation");
+
+    assert_eq!(result.stop_reason, acp::StopReason::Cancelled);
+}
+
+#[test]
+fn cancelled_prompt_surfaces_an_error_the_agent_produced_itself() {
+    // The agent answered within the grace period, so nothing was torn down:
+    // whatever it said, including a failure, is its own and must reach the user.
+    let error = normalize_cancelled_prompt_result(CancelledPrompt::Answered(Err(
+        acp::Error::auth_required(),
+    )))
+    .expect_err("an agent-authored error must not be rewritten as a cancellation");
+
+    assert_eq!(error.code, acp::ErrorCode::AuthRequired);
+
+    let error = normalize_cancelled_prompt_result(CancelledPrompt::Answered(Err(
+        shutdown_transport_error(),
+    )))
+    .expect_err("a connection that dropped before any shutdown is the agent crashing");
+
+    assert_eq!(error.code, acp::ErrorCode::InternalError);
+}
+
+#[test]
+fn cancelled_prompt_preserves_completed_agent_response() {
+    for result in [
+        CancelledPrompt::Answered(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))),
+        CancelledPrompt::AfterShutdown(Some(Ok(acp::PromptResponse::new(
+            acp::StopReason::EndTurn,
+        )))),
+    ] {
+        let response = normalize_cancelled_prompt_result(result)
+            .expect("completed prompt should remain successful");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+}
+
 #[tokio::test]
 async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
     let (reply, result) = oneshot::channel();
@@ -52,7 +110,7 @@ async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
     )
     .await;
 
-    assert_eq!(result, Some(42));
+    assert_eq!(result, CancelledPrompt::Answered(42));
     assert!(!shutdown_called.load(Ordering::SeqCst));
 }
 
@@ -75,7 +133,7 @@ async fn cancelled_prompt_forces_shutdown_after_grace_then_waits_for_result() {
     )
     .await;
 
-    assert_eq!(result, Some(7));
+    assert_eq!(result, CancelledPrompt::AfterShutdown(Some(7)));
     assert!(shutdown_called.load(Ordering::SeqCst));
 }
 
@@ -96,7 +154,7 @@ async fn cancelled_prompt_stops_waiting_after_shutdown_grace() {
     )
     .await;
 
-    assert_eq!(result, None);
+    assert_eq!(result, CancelledPrompt::AfterShutdown(None));
     assert!(shutdown_called.load(Ordering::SeqCst));
 }
 

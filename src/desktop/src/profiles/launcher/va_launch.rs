@@ -116,7 +116,10 @@ fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
     common::sidecar::find("va-launch", "VIBEAROUND_VA_LAUNCH_BIN")
 }
 
-/// The bundled TUI that VibeAround Agent launches open into.
+/// The bundled TUI that VibeAround Agent launches open into. Its only caller,
+/// `va_tui_launch_command`, is replaced by a stub under `cfg(test)`, so this is
+/// gated the same way rather than left to warn as unused in test builds.
+#[cfg(not(test))]
 pub(super) fn resolve_va_tui_binary() -> anyhow::Result<PathBuf> {
     common::sidecar::find("va-tui", "VIBEAROUND_VA_TUI_BIN")
 }
@@ -284,7 +287,9 @@ mod tests {
     fn process_launch_pushes_launch_profile_file_to_va_launch() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = env_test_lock().lock().expect("env test lock");
+        let _guard = crate::profiles::launch_env_test_lock()
+            .lock()
+            .expect("launch env test lock");
         let dir = std::env::temp_dir().join(format!(
             "vibearound-va-launch-test-{}",
             uuid::Uuid::new_v4()
@@ -342,7 +347,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn process_launch_pushes_launch_profile_file_to_va_launch() {
-        let _guard = env_test_lock().lock().expect("env test lock");
+        let _guard = crate::profiles::launch_env_test_lock()
+            .lock()
+            .expect("launch env test lock");
         let dir = std::env::temp_dir().join(format!(
             "vibearound-va-launch-test-{}",
             uuid::Uuid::new_v4()
@@ -397,7 +404,9 @@ mod tests {
 
     #[test]
     fn explicit_va_launch_binary_must_exist() {
-        let _guard = env_test_lock().lock().expect("env test lock");
+        let _guard = crate::profiles::launch_env_test_lock()
+            .lock()
+            .expect("launch env test lock");
         let previous = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
         std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", "/definitely/not/va-launch");
 
@@ -428,10 +437,5 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         std::fs::read_to_string(path).expect("read captured input")
-    }
-
-    fn env_test_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }

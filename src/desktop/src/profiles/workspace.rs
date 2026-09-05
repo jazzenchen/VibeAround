@@ -147,7 +147,8 @@ mod tests {
 
     #[test]
     fn missing_agent_workspace_uses_config_default() {
-        let workspace = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let workspace = terminal::canonical_workspace_path(&std::env::current_dir().unwrap())
+            .expect("canonical workspace");
         let mut cfg = config::Config::default();
         cfg.default_workspace = workspace.clone();
 

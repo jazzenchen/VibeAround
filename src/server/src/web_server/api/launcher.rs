@@ -738,7 +738,9 @@ mod tests {
         assert_eq!(agent_id, "codex");
         assert_eq!(
             workspace,
-            std::fs::canonicalize(&path).expect("canonical path")
+            common::workspace::normalize_workspace_cwd(
+                std::fs::canonicalize(&path).expect("canonical path")
+            )
         );
 
         std::fs::remove_dir_all(&path).expect("remove temp workspace");

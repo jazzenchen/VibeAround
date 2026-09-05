@@ -1,6 +1,8 @@
 use super::*;
 use crate::process::bridge::{BridgeExit, CancelSignal, ProcessBridge, StdioPipes};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+#[cfg(unix)]
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -38,8 +40,13 @@ impl ProcessBridge for InstantErrorBridge {
     }
 }
 
+/// Reads stdout to EOF and exits cleanly. Its only user is a Unix-only test,
+/// so it is gated the same way — a Windows build would otherwise flag it as
+/// unused, which is how it came to be deleted once.
+#[cfg(unix)]
 struct WaitForEofBridge;
 
+#[cfg(unix)]
 impl ProcessBridge for WaitForEofBridge {
     fn run(
         self: Box<Self>,
@@ -124,7 +131,14 @@ impl ProcessBridge for PendingBridge {
 }
 
 fn cat_spec() -> SpawnSpec {
-    SpawnSpec::new("cat")
+    #[cfg(windows)]
+    {
+        SpawnSpec::new("cmd.exe").args(["/D", "/S", "/C", "more"])
+    }
+    #[cfg(not(windows))]
+    {
+        SpawnSpec::new("cat")
+    }
 }
 
 #[test]
@@ -835,6 +849,7 @@ fn hard_killed_daemon_takes_every_child_down() {
         .spawn()
         .expect("spawn harness");
     let mut harness = KillOnDrop(harness);
+    #[cfg(unix)]
     let harness_pid = harness.0.id();
     let stdout = harness.0.stdout.take().expect("harness stdout");
     let (lines_tx, lines_rx) = mpsc::channel();

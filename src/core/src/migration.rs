@@ -910,12 +910,12 @@ fn create_private_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn make_private_file(path: &Path) -> Result<()> {
+fn make_private_file(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("set permissions on {}", path.display()))?;
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("set permissions on {}", _path.display()))?;
     }
     Ok(())
 }

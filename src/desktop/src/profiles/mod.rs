@@ -981,6 +981,12 @@ pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf
     workspace::resolve_launch_workspace(agent_id)
 }
 
+#[cfg(test)]
+pub(crate) fn launch_env_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn emit_launch_config_changed(app: &tauri::AppHandle) {
     let _ = app.emit(crate::tray::LAUNCH_CONFIG_CHANGED_EVENT, ());
 }
@@ -988,7 +994,7 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::profiles_launch_direct_sync;
+    use super::{launch_env_test_lock, profiles_launch_direct_sync};
     use super::{sanitize_agent_launch_args, validate_connection_agent_id};
     use common::agent_state::AgentLaunchArgs;
     #[cfg(windows)]
@@ -1047,12 +1053,15 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn launch_direct_invokes_va_launch_boundary() {
-        let _guard = env_test_lock().lock().expect("env test lock");
+        let _guard = launch_env_test_lock().lock().expect("launch env test lock");
         let dir = unique_test_dir("direct-va-launch");
         let data_dir = dir.join("data");
         let workspace = dir.join("workspace");
         std::fs::create_dir_all(&data_dir).expect("create data dir");
         std::fs::create_dir_all(&workspace).expect("create workspace dir");
+        // Pin the preferences the launch must carry through, so the test proves
+        // launcher.json reaches va-launch rather than comparing the launcher's
+        // output against the same readers it consulted.
         std::fs::write(
             data_dir.join("launcher.json"),
             serde_json::json!({
@@ -1126,11 +1135,5 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         std::fs::read_to_string(path).expect("read captured profile")
-    }
-
-    #[cfg(windows)]
-    fn env_test_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }

@@ -739,7 +739,16 @@ mod tests {
 
         assert_eq!(session.resume_session_id.as_deref(), Some("session-1"));
         assert_eq!(session.session_action, Some(ChatSessionAction::Resume));
+        // On Unix the workspace round-trips verbatim, so pin the literal; on
+        // Windows the scope normalises the path, so compare against that form
+        // rather than asserting nothing.
+        #[cfg(unix)]
         assert_eq!(session.session_workspace.as_deref(), Some("/tmp/project"));
+        #[cfg(windows)]
+        assert_eq!(
+            session.session_workspace.as_deref(),
+            Some(scope.workspace.as_str())
+        );
         assert_eq!(session.store_scope, Some(scope));
 
         let _ = fs::remove_dir_all(&root);
