@@ -116,6 +116,14 @@ fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
     common::sidecar::find("va-launch", "VIBEAROUND_VA_LAUNCH_BIN")
 }
 
+/// The bundled TUI that VibeAround Agent launches open into. Its only caller,
+/// `va_tui_launch_command`, is replaced by a stub under `cfg(test)`, so this is
+/// gated the same way rather than left to warn as unused in test builds.
+#[cfg(not(test))]
+pub(super) fn resolve_va_tui_binary() -> anyhow::Result<PathBuf> {
+    common::sidecar::find("va-tui", "VIBEAROUND_VA_TUI_BIN")
+}
+
 fn profile_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher::LaunchProfile {
     va_launcher::LaunchProfile {
         schema_version: Some(1),
