@@ -40,6 +40,27 @@ impl ProcessBridge for InstantErrorBridge {
     }
 }
 
+/// Reads stdout to EOF and exits cleanly. Its only user is a Unix-only test,
+/// so it is gated the same way — a Windows build would otherwise flag it as
+/// unused, which is how it came to be deleted once.
+#[cfg(unix)]
+struct WaitForEofBridge;
+
+#[cfg(unix)]
+impl ProcessBridge for WaitForEofBridge {
+    fn run(
+        self: Box<Self>,
+        mut pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            let mut output = Vec::new();
+            let _ = pipes.stdout.read_to_end(&mut output).await;
+            BridgeExit::Clean
+        })
+    }
+}
+
 struct DelayedCancelBridge {
     cancel_seen: Arc<tokio::sync::Semaphore>,
     release: Arc<tokio::sync::Semaphore>,
