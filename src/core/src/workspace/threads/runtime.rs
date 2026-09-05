@@ -129,19 +129,30 @@ const ACP_CANCEL_GRACE: Duration = Duration::from_secs(30);
 /// Final bound for an ACP request to resolve after its process has shut down.
 const ACP_SHUTDOWN_RESPONSE_GRACE: Duration = Duration::from_secs(2);
 
+/// What a cancelled prompt resolved to, and whether VibeAround had to shut the
+/// host down to get there. That distinction decides whose error an error is.
+#[derive(Debug, PartialEq)]
+enum CancelledPrompt<T> {
+    /// The agent answered on its own within the cancel grace period.
+    Answered(T),
+    /// The prompt outlived the grace period, so the host was shut down; this is
+    /// what the prompt resolved to afterwards, if anything.
+    AfterShutdown(Option<T>),
+}
+
 async fn await_cancelled_prompt<F, S, SF>(
     mut prompt: Pin<&mut F>,
     grace: Duration,
     shutdown_grace: Duration,
     shutdown: S,
-) -> Option<F::Output>
+) -> CancelledPrompt<F::Output>
 where
     F: Future,
     S: FnOnce() -> SF,
     SF: Future<Output = ()>,
 {
     match tokio::time::timeout(grace, prompt.as_mut()).await {
-        Ok(result) => Some(result),
+        Ok(result) => CancelledPrompt::Answered(result),
         Err(_) => {
             tracing::warn!(
                 grace_seconds = grace.as_secs(),
@@ -149,13 +160,13 @@ where
             );
             shutdown().await;
             match tokio::time::timeout(shutdown_grace, prompt.as_mut()).await {
-                Ok(result) => Some(result),
+                Ok(result) => CancelledPrompt::AfterShutdown(Some(result)),
                 Err(_) => {
                     tracing::warn!(
                         grace_seconds = shutdown_grace.as_secs(),
                         "ACP prompt remained pending after agent shutdown"
                     );
-                    None
+                    CancelledPrompt::AfterShutdown(None)
                 }
             }
         }
@@ -166,22 +177,25 @@ pub(crate) fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
     Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
 }
 
-/// Once cancellation wins the turn race, transport errors are an expected
-/// consequence of shutting the ACP host down. Preserve an agent response that
-/// already completed, but never surface a torn-down connection as a turn error.
+/// Once cancellation wins the turn race, an error the agent produced on its own
+/// is still the agent's error and surfaces as one: a crash, an auth failure or a
+/// protocol error that lands during the grace period is a real failure. Only an
+/// error that appears after VibeAround shut the host down is a consequence of
+/// that shutdown — a torn-down connection — and reads as the cancellation it is.
 fn normalize_cancelled_prompt_result(
-    result: Option<acp::Result<acp::PromptResponse>>,
+    result: CancelledPrompt<acp::Result<acp::PromptResponse>>,
 ) -> acp::Result<acp::PromptResponse> {
     match result {
-        Some(Ok(response)) => Ok(response),
-        Some(Err(error)) => {
+        CancelledPrompt::Answered(result) => result,
+        CancelledPrompt::AfterShutdown(Some(Ok(response))) => Ok(response),
+        CancelledPrompt::AfterShutdown(Some(Err(error))) => {
             tracing::debug!(
                 error = %error.message,
-                "discarding ACP prompt error after cancellation"
+                "discarding ACP prompt error caused by host shutdown"
             );
             cancelled_prompt_response()
         }
-        None => cancelled_prompt_response(),
+        CancelledPrompt::AfterShutdown(None) => cancelled_prompt_response(),
     }
 }
 
