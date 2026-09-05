@@ -6,71 +6,9 @@ use anyhow::anyhow;
 use tauri::{AppHandle, Runtime};
 
 use super::{
-    base_report, current_platform, emit_progress, portable_toolchain_enabled, Manifest,
-    StartkitChoices, StartkitItem, StartkitItemReport, StartkitItemStatus, StartkitProgress,
+    base_report, emit_progress, portable_toolchain_enabled, StartkitChoices, StartkitItem,
+    StartkitItemReport, StartkitItemStatus,
 };
-
-pub(in crate::startkit) async fn execute_managed_toolchain_item(
-    manifest: &Manifest,
-    item: &StartkitItem,
-    choices: &StartkitChoices,
-    cancelled: Option<&Arc<AtomicBool>>,
-    progress: StartkitProgress<'_>,
-) -> anyhow::Result<Option<StartkitItemReport>> {
-    if !portable_toolchain_enabled(choices) {
-        return Ok(None);
-    }
-
-    let mut log_progress = |line: String| {
-        if let Some(progress) = progress {
-            progress(item, StartkitItemStatus::Running, Some(line));
-        }
-    };
-    let is_cancelled = || {
-        cancelled
-            .map(|flag| flag.load(Ordering::Relaxed))
-            .unwrap_or(false)
-    };
-
-    let report = match item.id.as_str() {
-        "essentials.node" => {
-            if let Some(progress) = progress {
-                progress(
-                    item,
-                    StartkitItemStatus::Running,
-                    Some("Installing VibeAround portable Node.js".to_string()),
-                );
-            }
-            let source = node_source_for_choices(manifest, choices)?;
-            let status =
-                common::toolchain::ensure_node_lts(&source, &mut log_progress, is_cancelled)
-                    .await?;
-            report_from_managed_tool_status(item, status)
-        }
-        "essentials.git" if current_platform() == "windows" => {
-            if let Some(progress) = progress {
-                progress(
-                    item,
-                    StartkitItemStatus::Running,
-                    Some("Installing VibeAround portable Git".to_string()),
-                );
-            }
-            let status =
-                common::toolchain::ensure_windows_portable_git(&mut log_progress, is_cancelled)
-                    .await?;
-            report_from_managed_tool_status(item, status)
-        }
-        "essentials.git" => StartkitItemReport {
-            status: StartkitItemStatus::Skipped,
-            message: Some("Portable toolchain does not require Git on this platform".to_string()),
-            actions: Vec::new(),
-            ..base_report(item)
-        },
-        _ => return Ok(None),
-    };
-
-    Ok(Some(report))
-}
 
 pub(in crate::startkit) async fn run_managed_npm_package_item<R: Runtime>(
     app: &AppHandle<R>,
@@ -243,21 +181,6 @@ fn managed_item_dependency_dir(item: &StartkitItem) -> anyhow::Result<PathBuf> {
         .as_deref()
         .ok_or_else(|| anyhow!("managed item '{}' has no dependency id", item.id))?;
     Ok(common::plugins::user_plugin_dependency_dir(dependency_id))
-}
-
-fn node_source_for_choices(
-    manifest: &Manifest,
-    choices: &StartkitChoices,
-) -> anyhow::Result<common::toolchain::NodeSource> {
-    let source = manifest
-        .sources
-        .get(&choices.source)
-        .or_else(|| manifest.sources.get("global"))
-        .ok_or_else(|| anyhow!("startkit source '{}' not found", choices.source))?;
-    Ok(common::toolchain::NodeSource {
-        index_url: source.node_index.clone(),
-        dist_base: source.node_dist.clone(),
-    })
 }
 
 pub(in crate::startkit) fn item_uses_managed_dependency_dir(item: &StartkitItem) -> bool {

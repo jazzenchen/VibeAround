@@ -1,0 +1,134 @@
+# Installs the VibeAround-managed PortableGit under $STARTKIT_HOME\runtime\git,
+# mirroring what the daemon reads back:
+#   versions\<tag>\       the extracted PortableGit
+#   current.json          the manifest the daemon treats as "installed"
+#   current.env           the same facts for shell consumers
+#
+# Progress is streamed as NDJSON; the last JSON line is the result.
+$ErrorActionPreference = "Stop"
+
+function Emit($obj) { $obj | ConvertTo-Json -Compress }
+# Windows briefly reports a replaced destination as delete-pending, and virus
+# scanners and the indexer hold handles on freshly written files, so a move can
+# fail for a moment and then succeed. `current.json` and `current.env` are read
+# on every process spawn, which is exactly when that collision happens. Retry the
+# three transient Win32 errors and let every other failure through immediately,
+# so a genuine mistake still fails fast. Mirrors core's file_replace.
+function Move-WithRetry($from, $to) {
+  $transient = @(0x5, 0x20, 0x21)  # ACCESS_DENIED, SHARING_VIOLATION, LOCK_VIOLATION
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    try {
+      Move-Item -Force -Path $from -Destination $to
+      return
+    } catch {
+      $code = $_.Exception.HResult -band 0xFFFF
+      if ($attempt -eq 19 -or $transient -notcontains $code) { throw }
+      Start-Sleep -Milliseconds ([int][Math]::Pow(2, [Math]::Min($attempt, 4)))
+    }
+  }
+}
+
+function Progress($message) { Emit @{ event = "progress"; message = $message } }
+function Fail($message) {
+  Emit @{ event = "result"; status = "error"; message = $message; actions = @("install") }
+  exit 0
+}
+
+# PortableGit only exists for Windows, and only VibeAround's own copy is ours to
+# install. A system Git is the user's to manage.
+if ($env:STARTKIT_PORTABLE_TOOLCHAIN -ne "true") {
+  Emit @{ event = "result"; status = "blocked"; message = "VibeAround's portable toolchain is off, so Git has to be installed on this computer."; actions = @("manual", "verify") }
+  exit 0
+}
+if (-not $env:STARTKIT_HOME) { Fail "STARTKIT_HOME is required." }
+
+$runtimeDir = Join-Path $env:STARTKIT_HOME "runtime\git"
+$versionsDir = Join-Path $runtimeDir "versions"
+$downloadDir = Join-Path (Join-Path $env:STARTKIT_HOME "runtime") "downloads"
+New-Item -ItemType Directory -Force -Path $versionsDir, $downloadDir | Out-Null
+
+Progress "Resolving the latest Git for Windows release"
+try {
+  $release = Invoke-RestMethod -Uri "https://api.github.com/repos/git-for-windows/git/releases/latest" `
+    -Headers @{ "User-Agent" = "VibeAround" } -UseBasicParsing
+} catch {
+  Fail "Failed to reach the Git for Windows release feed."
+}
+if ($release.draft -or $release.prerelease) {
+  Fail "Git for Windows release $($release.tag_name) is not stable."
+}
+$tag = $release.tag_name
+
+$archMarker = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "64-bit" }
+$asset = $release.assets | Where-Object {
+  $n = $_.name.ToLower()
+  $n.StartsWith("portablegit-") -and $n.EndsWith(".7z.exe") -and $n.Contains($archMarker)
+} | Select-Object -First 1
+if (-not $asset) { Fail "No PortableGit asset for $archMarker in $tag." }
+
+$installDir = Join-Path $versionsDir ($tag -replace "[^A-Za-z0-9._-]", "_")
+$gitExe = Join-Path $installDir "cmd\git.exe"
+
+if (Test-Path $gitExe) {
+  $current = (& $gitExe --version 2>$null)
+  if ($current -and $current.Contains($tag.TrimStart("v"))) {
+    Progress "Recording the Git runtime"
+  } else {
+    $needsInstall = $true
+  }
+} else {
+  $needsInstall = $true
+}
+
+if ($needsInstall) {
+  Progress "Downloading $($asset.name)"
+  $installer = Join-Path $downloadDir $asset.name
+  try {
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer -UseBasicParsing
+  } catch {
+    Fail "Failed to download $($asset.name)."
+  }
+
+  # PortableGit ships as a self-extracting 7-Zip archive: -y accepts, -o sets the
+  # destination.
+  Progress "Extracting $($asset.name)"
+  $stagingDir = Join-Path $versionsDir ".staging-git"
+  if (Test-Path $stagingDir) { Remove-Item -Recurse -Force $stagingDir }
+  New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+  $proc = Start-Process -FilePath $installer -ArgumentList @("-y", "-o$stagingDir") -Wait -PassThru -NoNewWindow
+  if ($proc.ExitCode -ne 0) { Fail "The PortableGit extractor exited with $($proc.ExitCode)." }
+  if (-not (Test-Path (Join-Path $stagingDir "cmd\git.exe"))) {
+    Fail "$($asset.name) did not contain cmd\git.exe."
+  }
+
+  if (Test-Path $installDir) { Remove-Item -Recurse -Force $installDir }
+  Move-WithRetry $stagingDir $installDir
+  Remove-Item -Force $installer -ErrorAction SilentlyContinue
+  Progress "Recording the Git runtime"
+}
+
+# The shell mirror lands before the manifest, because the manifest is what marks
+# the tool as installed.
+function Quote($value) { "'" + ($value -replace "'", "'\''") + "'" }
+$binDir = Join-Path $installDir "cmd"
+$stateLines = @(
+  "# Generated by VibeAround. Do not edit; regenerated on every install."
+  "VA_TOOL=" + (Quote "git")
+  "VA_TOOL_VERSION=" + (Quote $tag)
+  "VA_TOOL_INSTALL_DIR=" + (Quote $installDir)
+  "VA_TOOL_BIN_DIR=" + (Quote $binDir)
+)
+$stateTmp = Join-Path $runtimeDir "current.env.tmp"
+Set-Content -Path $stateTmp -Value ($stateLines -join "`n") -NoNewline -Encoding utf8
+Move-WithRetry $stateTmp (Join-Path $runtimeDir "current.env")
+
+$manifest = [ordered]@{
+  version = $tag
+  install_dir = $installDir
+  installed_at_unix_ms = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+}
+$manifestTmp = Join-Path $runtimeDir "current.json.tmp"
+Set-Content -Path $manifestTmp -Value ($manifest | ConvertTo-Json) -Encoding utf8
+Move-WithRetry $manifestTmp (Join-Path $runtimeDir "current.json")
+
+Emit @{ event = "result"; status = "ok"; version = $tag; path = $gitExe; message = "Git $tag is ready"; actions = @() }
