@@ -144,8 +144,7 @@ async fn stream_command(
     cancelled: Option<&Arc<AtomicBool>>,
     mut on_line: impl FnMut(&str),
 ) -> anyhow::Result<Vec<u8>> {
-    let mut child =
-        crate::process::spawn_tree_killable(&mut command).context("spawning script")?;
+    let mut child = crate::process::spawn_tree_killable(&mut command).context("spawning script")?;
     let stdout = child
         .take_stdout()
         .ok_or_else(|| anyhow!("script stdout was not captured"))?;

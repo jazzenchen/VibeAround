@@ -82,21 +82,33 @@ fn apply_startkit_env(
     // Scripts that can install either a system-wide or a VibeAround-managed copy
     // of a tool need the user's toolchain choice to pick a path.
     set(env, "STARTKIT_TOOLCHAIN_MODE", &choices.toolchain_mode);
-    set(env, "STARTKIT_PORTABLE_TOOLCHAIN", if portable_toolchain_enabled(choices) {
+    set(
+        env,
+        "STARTKIT_PORTABLE_TOOLCHAIN",
+        if portable_toolchain_enabled(choices) {
             "true"
         } else {
             "false"
-        },);
+        },
+    );
     let managed_item_active = item_uses_managed_dependency_dir(item) && is_managed_mode(choices);
-    set(env, "STARTKIT_ITEM_MANAGED", if managed_item_active { "true" } else { "false" },);
+    set(
+        env,
+        "STARTKIT_ITEM_MANAGED",
+        if managed_item_active { "true" } else { "false" },
+    );
     set(env, "STARTKIT_NPM_REGISTRY", &source.npm_registry);
     set(env, "STARTKIT_NODE_INDEX_URL", &source.node_index);
     set(env, "STARTKIT_NODE_DIST_BASE", &source.node_dist);
-    set(env, "STARTKIT_CAN_INSTALL", if item.install.is_some() && (!item.managed || managed_item_active) {
+    set(
+        env,
+        "STARTKIT_CAN_INSTALL",
+        if item.install.is_some() && (!item.managed || managed_item_active) {
             "true"
         } else {
             "false"
-        },);
+        },
+    );
     set(env, "STARTKIT_ITEM_ID", &item.id);
     if let Some(value) = &item.min_version {
         set(env, "STARTKIT_MIN_VERSION", value);
